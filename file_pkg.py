@@ -46,6 +46,13 @@ def gen_file_for_one_line(line,fileName):
     with open(fileName, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(line)
+
+def gen_file_by_line(header,line,fileName):
+    with open(fileName, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        # write multiple rows
+        writer.writerow(line)
 # output csv file content as list by row
 # INPUT : file name
 # OUTPUT : data list
