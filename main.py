@@ -13,6 +13,7 @@ from scipy.sparse.linalg import svds
 from numpy import inf
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
+from sklearn.metrics import accuracy_score,precision_score,recall_score
 import xlsxwriter
 import math
 from colour import Color
@@ -21,6 +22,7 @@ from sklearn.metrics import confusion_matrix
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import scale
 import file_pkg
+from sklearn.cross_decomposition import PLSRegression
 
 def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFileName,ClassFileName,sampleNameFile,variableNameFile,scale_type,iteration,survivalRate,V_rankingAlgorithm,nComponent,isCutoff):
     ITERATION = iteration
@@ -60,7 +62,7 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
         class_num_label.append(i)
     # get the variable list
 
-    ori_sample = np.array(sampleList)
+    ori_sample = copy.deepcopy(np.array(sampleList))
     ori_class = classList
 
     #Do class Tupa
@@ -90,9 +92,24 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
     for i in range(1,classNum+1):
         if hash_classCount[i] < 9:
             isexternal = False
+
+
+    if not isexternal:
+        indices_train = indice_list
+        if scale_type == 'SVN':
+            scale_training_sample, col_mean = SVN_scale_half_data(sampleList)
+        else:
+            scale_training_sample, scale_training_mean, scale_training_std = scale_half_data(sampleList)
     if isexternal:
         sampleList, external_validation, classList, external_class, indices_train, indices_test = selectRandom(sampleList, classList, howMuchSplit)
         # Create stat file with
+        if scale_type == 'SVN':
+            scale_training_sample, col_mean = SVN_scale_half_data(sampleList)
+            scaled_external, col_mean = SVN_scale_half_data(external_validation)
+        else:
+            scale_training_sample, scale_training_mean, scale_training_std = scale_half_data(sampleList)
+            scaled_external, scale_training_mean, scale_training_std = scale_half_data(external_validation)
+
         class_stat_list_noCutoff = []
         class_stat_list_external_noCutoff = []
         for classNum in range(1, int(classNum) + 1):
@@ -100,10 +117,17 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
             # Create stat file with
             class_stat_list_external_noCutoff.append([])
         # Train and predict the class
-        clf = svm.SVC(kernel='linear', random_state=0, probability=True)
-        clf.fit(sampleList, classList)
-        class_pred = clf.predict(sampleList)
+        clf = svm.SVC(kernel='linear', random_state=42, probability=True)
+        clf.fit(scale_training_sample, classList)
+        class_pred = clf.predict(scale_training_sample)
         classofic_report = classification_report(classList, class_pred)
+        internal_stat_acc = accuracy_score(classList, class_pred)
+        internal_stat_sel = precision_score(classList, class_pred, average='micro')
+        internal_stat_sen = recall_score(classList, class_pred, average='micro')
+        file_pkg.gen_file_by_line(["Selectivity", "Sensitivity", "Accuracy"],
+                                  [internal_stat_sel, internal_stat_sen, internal_stat_acc],
+                                  'output' + '/training_stat_report_no_FS.csv')
+
         report_lines = classofic_report.split('\n')
         report_lines = report_lines[2:]
         # generate the statistic report
@@ -117,8 +141,14 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
                                               [k for k, v in class_trans_dict.items() if v == str(c + 1)][
                                                   0] + '_no_cutoff.csv')
         # for external
-        class_pred_external = clf.predict(external_validation)
+        class_pred_external = clf.predict(scaled_external)
         classofic_report_external = classification_report(external_class, class_pred_external)
+        external_stat_acc = accuracy_score(external_class, class_pred_external)
+        external_stat_sel = precision_score(external_class, class_pred_external, average='micro')
+        external_stat_sen = recall_score(external_class, class_pred_external, average='micro')
+        file_pkg.gen_file_by_line(["Selectivity", "Sensitivity", "Accuracy"],
+                                  [external_stat_sel, external_stat_sen, external_stat_acc],
+                                  'output' + '/external_stat_report_no_FS.csv')
         report_lines_external = classofic_report_external.split('\n')
         report_lines_external = report_lines_external[2:]
         # generate the statistic report
@@ -163,6 +193,7 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
     sample_taining, valid_idx = newScore.setNumber(int(classNum),classList,sampleList,startNum,howMuchSplit,V_rankingAlgorithm,nComponent)
 
     # generate file for selected training and selected validation in special format
+    file_pkg.gen_file_for_one_line(valid_idx, 'output/selected_Index.csv')
     if isexternal:
         file_pkg.export_file(ori_sample, ori_class, index_indices_train, valid_idx, 'output/selected_training_variables.csv', class_trans_dict, sampleName,variableName)
         file_pkg.export_file(ori_sample, ori_class, index_indices_test, valid_idx, 'output/selected_external_variables.csv', class_trans_dict, sampleName,variableName)
@@ -203,7 +234,6 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
     else:
         scale_training_sample, scale_training_mean, scale_training_std = scale_half_data(sampleList)
         scaled_external, scale_training_mean, scale_training_std = scale_half_data(external_validation)
-
 
 
     class_index_list = []
@@ -253,6 +283,61 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
         plt.legend()
         plt.savefig('output/pca_external.png')
         plt.figure().clear()
+
+        ####################### generate pcla
+        training_sample_pcla = np.array(scale_training_sample[:, valid_idx])
+        pls2 = PLSRegression(n_components=2)
+        pls2.fit(training_sample_pcla, classList)
+
+        scores = pls2.x_scores_
+        for z in range(1, classNum + 1):
+            pcla_core = scores[class_index_list[z], :]
+            x_ellipse, y_ellipse = confident_ellipse(pcla_core[:, 0], pcla_core[:, 1])
+            plt.plot(x_ellipse, y_ellipse, color=CLASS_COLOR[z - 1])
+            plt.fill(x_ellipse, y_ellipse, color=CLASS_COLOR[z - 1], alpha=0.3)
+            plt.scatter(pcla_core[:, 0], pcla_core[:, 1], c=CLASS_COLOR[z - 1],
+                        marker=CLASS_LABEL[0],
+                        label='class ' + [k for k, v in class_trans_dict.items() if v == str(z)][0])
+        variance_in_x = np.var(pls2.x_scores_, axis=0)
+        total_variance_in_x = np.var(training_sample_pcla, axis=0)
+        # normalize variance by total variance:
+        fractions_of_explained_variance = variance_in_x / sum(total_variance_in_x)
+        lv1_percentage = fractions_of_explained_variance[0] * 100
+        lv2_percentage = fractions_of_explained_variance[1] * 100
+        plt.xlabel("LV1(%{0:0.3f}".format(lv1_percentage) + ")")
+        plt.ylabel("LV2 (%{0:0.3f}".format(lv2_percentage) + ")")
+        plt.title('PLS-DA Training , Validation, with Feature Selection ')
+        plt.rcParams.update({'font.size': 10})
+        plt.legend()
+        plt.savefig( 'output/pcls_training.png')
+        if isexternal:
+            vali_sample_pcla = np.array(scaled_external[:, valid_idx])
+            pls_vali = PLSRegression(n_components=2)
+            pls_vali.fit(vali_sample_pcla, external_class)
+
+            scores = pls_vali.x_scores_
+            for z in range(1, classNum + 1):
+                pcla_core = scores[external_class_index_list[z], :]
+                plt.scatter(pcla_core[:, 0], pcla_core[:, 1], c=CLASS_COLOR[z - 1],
+                            marker=CLASS_LABEL[1],
+                            label='class ' + [k for k, v in class_trans_dict.items() if v == str(z)][0])
+            variance_in_x_vali = np.var(pls_vali.x_scores_, axis=0)
+            total_variance_in_x_vali = np.var(vali_sample_pcla, axis=0)
+            # normalize variance by total variance:
+            fractions_of_explained_variance_vali = variance_in_x_vali / sum(total_variance_in_x_vali)
+            lv1_percentage = fractions_of_explained_variance_vali[0] * 100
+            lv2_percentage = fractions_of_explained_variance_vali[1] * 100
+            plt.xlabel("LV1(%{0:0.3f}".format(lv1_percentage) + ")")
+            plt.ylabel("LV2 (%{0:0.3f}".format(lv2_percentage) + ")")
+            plt.title('PLS-DA Training , Validation, with Feature Selection ')
+            plt.rcParams.update({'font.size': 10})
+            plt.legend()
+            plt.savefig('output/pcls_external.png')
+            plt.figure().clear()
+
+        clf_extern = svm.SVC(kernel='linear', random_state=0, probability=True)
+        clf_extern.fit(scale_training_sample[:, valid_idx], classList)
+        class_pred = clf_extern.predict(scaled_external[:, valid_idx])
         conf_matrix = confusion_matrix(external_class, class_pred)
         file_pkg.gen_file_by_matrix(conf_matrix,'output/confusion_matrix.csv')
         clf_extern_no_FS = svm.SVC(kernel='linear', random_state=0, probability=True)
@@ -283,6 +368,7 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
     # generate 4 SVM graph
     # graph 1: training without feature selection
     gen_pca(scale_training_sample, classNum, class_index_list, CLASS_COLOR, CLASS_LABEL, 'output/PCATrainNoFS.png','PCA Training, No Feature Selection ',class_trans_dict)
+    gen_pcls(scale_training_sample, classNum, class_index_list, CLASS_COLOR, CLASS_LABEL, 'output/PCLATrainNoFS.png','PLS-DA Training, No Feature Selection ',class_trans_dict,classList)
     # generate predict ROC
     if classNum == 2:
         gen_roc_graph(sampleList,classList,sampleList,classList,'output/rocTrainNoFS/rocTrainNoFS.png','ROC Training, No Feature Selection ')
@@ -292,6 +378,7 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
 
     # graph 2: validation without feature selection
     gen_pca(scaled_external, classNum, external_class_index_list, CLASS_COLOR, CLASS_LABEL, 'output/PCAValiNoFS.png','PCA Validation, No Feature Selection ',class_trans_dict)
+    gen_pcls(scaled_external, classNum, external_class_index_list, CLASS_COLOR, CLASS_LABEL, 'output/PCLSValiNoFS.png','PLS-DA Validation, No Feature Selection ',class_trans_dict,external_class)
     # generate predict ROC
     if classNum == 2:
         gen_roc_graph(sampleList,classList,external_validation,external_class,'output/rocValiNoFS/rocValiNoFS.png', 'ROC Validation, No Feature Selection ')
@@ -302,6 +389,7 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
 
     # graph 3: training with feature selection
     gen_pca(scale_training_sample[:,valid_idx], classNum, class_index_list, CLASS_COLOR, CLASS_LABEL,'output/PCATrainWithFS.png','PCA Training, With Feature Selection ',class_trans_dict)
+    gen_pcls(scale_training_sample[:,valid_idx], classNum, class_index_list, CLASS_COLOR, CLASS_LABEL,'output/PCLSTrainWithFS.png','PLS-DA Training, With Feature Selection ',class_trans_dict, classList)
     # generate predict ROC
     if classNum == 2:
         gen_roc_graph(sampleList[:,valid_idx],classList,sampleList[:,valid_idx],classList,'output/rocTrainFS/rocTrainFS.png','ROC Training, With Feature Selection ')
@@ -313,6 +401,8 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
     # graph 4: validation with feature selection
     gen_pca(scaled_external[:, valid_idx], classNum, external_class_index_list, CLASS_COLOR, CLASS_LABEL,
             'output/PCAValiWithFS.png','PCA Validation, With Feature Selection ',class_trans_dict)
+    gen_pcls(scaled_external[:, valid_idx], classNum, external_class_index_list, CLASS_COLOR, CLASS_LABEL,
+            'output/PCLSValiWithFS.png', 'PLS-DA Validation, With Feature Selection ', class_trans_dict,external_class)
 
     # generate predict ROC
     if classNum == 2:
@@ -351,6 +441,43 @@ def main(isexternal,howMuchSplit,isMicro,tupaType,isMotabo,MotaboFileName,DataFi
     plt.legend()
     plt.savefig('output/pca_external_No_FS.png',bbox_inches="tight" )
     plt.figure().clear()
+    ############## calculating the PCLA percentage value
+    training_sample_pcla_no_FS = np.array(scaled_all_sample)
+    pls2_train_NOFS = PLSRegression(n_components=2)
+    pls2_train_NOFS.fit(training_sample_pcla_no_FS, classList)
+    scores = pls2_train_NOFS.x_scores_
+    for z in range(1, classNum + 1):
+        pcla_core = scores[class_index_list[z], :]
+        x_ellipse, y_ellipse = confident_ellipse(pcla_core[:, 0], pcla_core[:, 1])
+        plt.plot(x_ellipse, y_ellipse, color=CLASS_COLOR[z - 1])
+        plt.fill(x_ellipse, y_ellipse, color=CLASS_COLOR[z - 1], alpha=0.3)
+        plt.scatter(pcla_core[:, 0], pcla_core[:, 1], c=CLASS_COLOR[z - 1],
+                    marker=CLASS_LABEL[0], label='class ' + [k for k, v in class_trans_dict.items() if v == str(z)][0])
+    variance_in_x = np.var(pls2_train_NOFS.x_scores_, axis=0)
+    total_variance_in_x = np.var(training_sample_pcla_no_FS, axis=0)
+    # normalize variance by total variance:
+    fractions_of_explained_variance = variance_in_x / sum(total_variance_in_x)
+    lv1_percentage = fractions_of_explained_variance[0] * 100
+    lv2_percentage = fractions_of_explained_variance[1] * 100
+    plt.xlabel("LV1(%{0:0.3f}".format(lv1_percentage) + ")")
+    plt.ylabel("LV2 (%{0:0.3f}".format(lv2_percentage) + ")")
+    if isexternal:
+        vali_sample_pcla_no_FS = np.array(scaled_external)
+        pls_vali_NOFS = PLSRegression(n_components=2)
+        pls_vali_NOFS.fit(vali_sample_pcla_no_FS, external_class)
+
+        scores = pls_vali_NOFS.x_scores_
+        for z in range(1, classNum + 1):
+            pcla_core = scores[external_class_index_list[z], :]
+            plt.scatter(pcla_core[:, 0], pcla_core[:, 1], c=CLASS_COLOR[z - 1],
+                        marker=CLASS_LABEL[1],
+                        label='class ' + [k for k, v in class_trans_dict.items() if v == str(z)][0])
+        # normalize variance by total variance:
+        plt.title('PLS-DA Training , Validation, No Feature Selection ')
+        plt.rcParams.update({'font.size': 10})
+        plt.legend()
+        plt.savefig( 'output/pcls_no_FS.png')
+        plt.figure().clear()
 
     ####################################  END GRAPH CODE ###################################
 ## axis=0 is for row
@@ -504,6 +631,31 @@ def gen_pca(training_sample,classNum,class_index_list,class_color,class_label,fi
     plt.legend()
     plt.savefig(fileName,bbox_inches="tight")
     plt.figure().clear()
+def gen_pcls(training_sample,classNum,class_index_list,class_color,class_label,fileName,graph_title, class_trans_dict,classList):
+    training_sample = np.array(training_sample)
+    pls2 = PLSRegression(n_components=2)
+    pls2.fit(training_sample,classList)
+
+    scores = pls2.x_scores_
+    for z in range(1, classNum + 1):
+        class_Xt_training_noFS = scores[class_index_list[z], :]
+        x_ellipse, y_ellipse = confident_ellipse(class_Xt_training_noFS[:, 0], class_Xt_training_noFS[:, 1])
+        plt.plot(x_ellipse, y_ellipse, color=class_color[z - 1])
+        plt.fill(x_ellipse, y_ellipse, color=class_color[z - 1], alpha=0.3)
+        plt.scatter(class_Xt_training_noFS[:, 0], class_Xt_training_noFS[:, 1], c=class_color[z - 1],
+                    marker=class_label[0], label='class ' + [k for k,v in class_trans_dict.items() if v == str(z)][0])
+    variance_in_x = np.var(pls2.x_scores_, axis=0)
+    total_variance_in_x = np.var(training_sample, axis=0)
+    # normalize variance by total variance:
+    fractions_of_explained_variance = variance_in_x / sum(total_variance_in_x)
+    lv1_percentage = fractions_of_explained_variance[0] * 100
+    lv2_percentage = fractions_of_explained_variance[1] * 100
+    plt.xlabel("LV1(%{0:0.3f}".format(lv1_percentage) + ")")
+    plt.ylabel("LV2 (%{0:0.3f}".format(lv2_percentage) + ")")
+    plt.title(graph_title)
+    plt.rcParams.update({'font.size': 10})
+    plt.legend()
+    plt.savefig(fileName,bbox_inches="tight")
 
 def class_tupa(X,Y):
     cls = np.array(Y)

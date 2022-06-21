@@ -1,12 +1,12 @@
 import numpy as np
-
+from sklearn.preprocessing import scale
 from sklearn.cross_decomposition import PLSRegression
 
 
 def selrpy(X, y, ncomponents):
     X = np.array(X)
     pls = PLSRegression(n_components=ncomponents)
-    pls.fit_transform(X, y)
+    pls.fit_transform(scale(X,axis=0,with_mean=True,with_std=True), y)
     bpls = pls.coef_
     xw = pls.x_weights_
     xw = (xw / np.linalg.norm(xw, axis=0))

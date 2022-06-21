@@ -42,7 +42,10 @@ def getValFromFileByCols(fileName):
         retData.append(tempData)
     return retData
 
-
+def gen_file_for_one_line(line,fileName):
+    with open(fileName, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(line)
 # output csv file content as list by row
 # INPUT : file name
 # OUTPUT : data list

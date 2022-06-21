@@ -8,7 +8,7 @@ import SelectivityRatio
 def setNumber(classNum, classList, allSampleList, startNum,howMuchSplit,vRanking,nComponent):
     allSampleList = np.array(allSampleList)
     #get the half randomly selected sample and calculate the fisher ration
-    sample_training, sample_test, class_training, class_test = selectRandom(allSampleList, classList,howMuchSplit)
+    sample_training, sample_test, class_training, class_test = selectRandom(allSampleList, classList,0.5)
     if vRanking == 'fisher':
         Ratio = fisherRatio_in.cal_ratio(sample_training, class_training, classNum)
     if vRanking == 'vip':

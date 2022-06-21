@@ -1,12 +1,12 @@
 import numpy as np
-
+from sklearn.preprocessing import scale
 from sklearn.cross_decomposition import PLSRegression
 
 
 def vipy(X, y, ncomponents):
     vipDic = {}
     pls = PLSRegression(n_components=ncomponents)
-    (xscrs, yscrs) = pls.fit_transform(X, y)
+    (xscrs, yscrs) = pls.fit_transform(scale(X,axis=0,with_mean=True,with_std=True), y)
     xw = pls.x_weights_
     b = np.linalg.pinv(xscrs) @ y
     xw = (xw / np.linalg.norm(xw, axis=0)) ** 2
